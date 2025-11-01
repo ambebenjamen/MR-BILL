@@ -1,96 +1,56 @@
-import { Request, Response, NextFunction } from 'express';
-import prisma from '../prisma';
+import { Request, Response } from "express";
+import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
+import { validateEmail } from "../helpers/validateEmail.js"; // 👈 imported here
 
-function validateEmail(email?: string) {
-  return typeof email === 'string' && email.includes('@');
-}
+const prisma = new PrismaClient();
 
-export const createUser = async (req: Request, res: Response, next: NextFunction) => {
+export const registerUser = async (req: Request, res: Response) => {
   try {
-    const { email, name, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'email and password are required' });
-    }
+    const { name, email, password } = req.body;
+
+    // Validate email format using helper
     if (!validateEmail(email)) {
-      return res.status(400).json({ success: false, message: 'invalid email' });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format",
+      });
     }
 
+    //Check if email exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "Email already in use",
+      });
+    }
+
+    //Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    //Create new user
     const user = await prisma.user.create({
-      data: { email, name: name ?? null, password }
+      data: {
+        name,
+        email,
+        password: hashedPassword,
+      },
     });
-    
-    const { password: _, ...userNoPass } = user as any;
-    res.status(201).json({ success: true, data: userNoPass });
-  } catch (err: any) {
-    if (err.code === 'P2002' && err.meta?.target?.includes('email')) {
-      return res.status(409).json({ success: false, message: 'email already in use' });
-    }
-    next(err);
-  }
-};
 
-export const getUsers = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const users = await prisma.user.findMany({
-      select: { id: true, email: true, name: true, createdAt: true, updatedAt: true }
+    return res.status(201).json({
+      success: true,
+      message: "User registered successfully",
+      data: user,
     });
-    res.json({ success: true, data: users });
-  } catch (err) {
-    next(err);
-  }
-};
-
-export const getUserById = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const id = Number(req.params.id);
-    if (Number.isNaN(id)) return res.status(400).json({ success: false, message: 'invalid id' });
-
-    const user = await prisma.user.findUnique({
-      where: { id },
-      select: { id: true, email: true, name: true, createdAt: true, updatedAt: true }
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
     });
-    if (!user) return res.status(404).json({ success: false, message: 'user not found' });
-    res.json({ success: true, data: user });
-  } catch (err) {
-    next(err);
-  }
-};
-
-export const updateUser = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const id = Number(req.params.id);
-    const { email, name, password } = req.body;
-    if (Number.isNaN(id)) return res.status(400).json({ success: false, message: 'invalid id' });
-    if (email && !validateEmail(email)) return res.status(400).json({ success: false, message: 'invalid email' });
-
-    const updated = await prisma.user.update({
-      where: { id },
-      data: { email, name, password }
-    });
-    const { password: _, ...userNoPass } = updated as any;
-    res.json({ success: true, data: userNoPass });
-  } catch (err: any) {
-    if (err.code === 'P2025') {
-      return res.status(404).json({ success: false, message: 'user not found' });
-    }
-    if (err.code === 'P2002' && err.meta?.target?.includes('email')) {
-      return res.status(409).json({ success: false, message: 'email already in use' });
-    }
-    next(err);
-  }
-};
-
-export const deleteUser = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const id = Number(req.params.id);
-    if (Number.isNaN(id)) return res.status(400).json({ success: false, message: 'invalid id' });
-
-    await prisma.user.delete({ where: { id } });
-    res.json({ success: true, message: 'deleted' });
-  } catch (err: any) {
-    if (err.code === 'P2025') {
-      return res.status(404).json({ success: false, message: 'user not found' });
-    }
-    next(err);
   }
 };
